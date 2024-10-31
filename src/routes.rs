@@ -49,7 +49,7 @@ mod tests {
     #[tokio::test]
     async fn test_inform_route() {
         let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(100);
-        let sample = include_bytes!("tests/samples/good_inform_1.xml");
+        let sample = include_bytes!("../tests/samples/good_inform_1.xml");
 
         let res = test::request()
             .method("POST")
