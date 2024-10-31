@@ -6,7 +6,7 @@ pub fn inform_route(
     event_tx: tokio::sync::mpsc::Sender<EventMessage>,
 ) -> impl warp::Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     let tx_filter = warp::any().map(move || event_tx.clone());
-    // Define individual routes
+    // Define the route for the inform endpoint - should be XML content
     warp::path!("acs")
         .and(warp::post())
         .and(warp::body::bytes())
@@ -29,6 +29,7 @@ pub fn build_routes(
 
 #[cfg(test)]
 mod tests {
+    use rand::distributions::uniform::SampleBorrow;
     use warp::test;
 
     use crate::routes::{hello_route, inform_route};
@@ -47,15 +48,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_inform_route() {
-        let (event_tx, event_rx) = tokio::sync::mpsc::channel(100);
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(100);
+        let sample = include_bytes!("tests/samples/good_inform_1.xml");
 
         let res = test::request()
             .method("POST")
             .path("/acs")
+            .body(&sample)
             .reply(&inform_route(event_tx))
             .await;
 
-        assert_eq!(res.status(), 200);
-        assert_eq!(res.body(), "Hello, world!");
+        assert_eq!(res.status(), 200); // Verify that the handler sent the correct message over the channel.
+        if let Some(event) = event_rx.recv().await {
+            let events = event.events.unwrap();
+            assert_eq!(events.len(), 1);
+        } else {
+            panic!("Expected to receive an event message, but got None");
+        }
     }
 }

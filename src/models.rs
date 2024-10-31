@@ -52,8 +52,8 @@ pub struct EventMessage {
     session_id: String,
     session_type: EventType,
     session_state: SessionState,
-    events: Option<Vec<Event>>,
-    parameters: Option<Vec<EventParameter>>,
+    pub events: Option<Vec<Event>>,
+    pub parameters: Option<Vec<EventParameter>>,
 }
 
 fn find_inform(envelope: &cwmp::protocol::Envelope) -> Option<&cwmp::protocol::Inform> {
