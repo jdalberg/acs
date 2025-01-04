@@ -29,7 +29,6 @@ pub fn build_routes(
 
 #[cfg(test)]
 mod tests {
-    use rand::distributions::uniform::SampleBorrow;
     use warp::test;
 
     use crate::routes::{hello_route, inform_route};

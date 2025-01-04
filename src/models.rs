@@ -2,6 +2,8 @@ use cwmp::protocol::BodyElement;
 use serde::Serialize;
 use uuid::Uuid;
 
+use crate::errors::AcsError;
+
 #[derive(Debug, Serialize, Default)]
 pub enum EventType {
     Inform,
@@ -52,6 +54,7 @@ pub struct EventMessage {
     session_id: String,
     session_type: EventType,
     session_state: SessionState,
+    pub device_id: String,
     pub events: Option<Vec<Event>>,
     pub parameters: Option<Vec<EventParameter>>,
 }
@@ -81,12 +84,26 @@ fn find_parameters(inform: &cwmp::protocol::Inform) -> Vec<EventParameter> {
         .collect()
 }
 
-impl From<&cwmp::protocol::Envelope> for EventMessage {
-    fn from(inform_envelope: &cwmp::protocol::Envelope) -> Self {
+fn construct_device_id(inform: &cwmp::protocol::Inform) -> String {
+    format!(
+        "{}-{}-{}-{}",
+        inform.device_id.manufacturer.0,
+        inform.device_id.oui.0,
+        inform.device_id.serial_number.0,
+        inform.device_id.product_class.0,
+    )
+}
+
+// Implement the conversion from a cwmp::protocol::Envelope to an EventMessage
+impl TryFrom<&cwmp::protocol::Envelope> for EventMessage {
+    type Error = AcsError;
+
+    fn try_from(inform_envelope: &cwmp::protocol::Envelope) -> Result<Self, Self::Error> {
         let pod_name = std::env::var("POD_NAME").unwrap_or_else(|_| "unknown_pod".to_string());
 
         // Create a unique session id based on valued in the inform envelope
         if let Some(inform) = find_inform(inform_envelope) {
+            // TODO: Construct a better session id - come up with a concept
             let session_id = format!(
                 "{}-{}-{}-{}",
                 inform.device_id.manufacturer.0,
@@ -94,24 +111,17 @@ impl From<&cwmp::protocol::Envelope> for EventMessage {
                 inform.device_id.serial_number.0,
                 inform.device_id.product_class.0,
             );
-            EventMessage {
+            Ok(EventMessage {
                 acs_instance_id: pod_name,
                 session_id,
                 session_type: EventType::Inform,
                 session_state: SessionState::Init,
                 events: Some(find_events(inform)),
                 parameters: Some(find_parameters(inform)),
-            }
+                device_id: construct_device_id(inform),
+            })
         } else {
-            let session_id = Uuid::new_v4();
-            EventMessage {
-                acs_instance_id: pod_name,
-                session_id: session_id.to_string(),
-                session_type: EventType::Unknown,
-                session_state: SessionState::Unknown,
-                events: None,
-                parameters: None,
-            }
+            Err(AcsError::NoInformPayload)
         }
     }
 }
@@ -129,12 +139,23 @@ impl EventMessage {
         serde_json::to_string(self).unwrap()
     }
 }
+
+#[derive(Debug)]
+enum PolicyType {
+    GetParameterValues,
+    SetParameterValues,
+    GetParameterNames,
+}
+
 #[derive(Debug)]
 pub struct PolicyMessage {
     acs_instance_id: String,
     session_id: String,
     session_type: String,
     session_state: String,
+    device_id: String,
+    policy_type: PolicyType,
+    policy_parameters: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -143,4 +164,7 @@ pub struct PolicyMessageResponse {
     session_id: String,
     session_type: String,
     session_state: String,
+    device_id: String,
+    policy_type: PolicyType,
+    response: String, // json version of the response from the device
 }

@@ -8,6 +8,7 @@ use rdkafka::ClientConfig;
 use tokio::time::Duration;
 use tokio_stream::StreamExt;
 
+mod errors;
 mod handlers;
 mod models;
 mod routes;
@@ -16,6 +17,11 @@ mod routes;
 /// when a new session is created or updated.
 ///
 /// Send the received events through a tokio channel to the main thread.
+///
+/// # Arguments
+///     * `topic` - The Kafka topic to consume messages from
+///     * `partition` - The partition to consume messages from, defaults to all. The idea is to have a stateful set decide the partition for each pod.
+///     * `tx` - The tokio channel sender to send the received messages to the main thread
 async fn run_queue_consumer(
     topic: &str,
     partition: u16,

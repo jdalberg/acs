@@ -1,8 +1,12 @@
 use crate::models::EventMessage;
+use log::error;
 use tokio::time::{timeout, Duration};
 
 const MAX_INFORM_TIMEOUT: u64 = 20;
 
+// This function is used to empty the policy and event queues
+// for a specific device from kafka.
+// A timeout or an END_OF_POLICIES marker will denote an end of the queue.
 async fn empty_queues() {
     // Do nothing
 }
@@ -20,20 +24,29 @@ pub async fn inform(
             // handle the parsed envelope if it is an inform
             if parsed_envelope.is_inform() {
                 // Send the event upstream
-                let event_message = EventMessage::from(&parsed_envelope);
-                // Send message asynchronously
-                // Set a timeout for sending the message
-                let send_result = event_tx.send(event_message).await;
+                match EventMessage::try_from(&parsed_envelope) {
+                    Ok(event_message) => {
+                        // Set a timeout for sending the message
+                        let send_result = event_tx.send(event_message).await;
 
-                match send_result {
-                    Ok(()) => {
-                        empty_queues().await;
-                        Ok(warp::reply::with_status("", warp::http::StatusCode::OK))
+                        match send_result {
+                            Ok(()) => {
+                                empty_queues().await;
+                                Ok(warp::reply::with_status("", warp::http::StatusCode::OK))
+                            }
+                            Err(_) => Ok(warp::reply::with_status(
+                                "Channel send failed",
+                                warp::http::StatusCode::REQUEST_TIMEOUT,
+                            )),
+                        }
                     }
-                    Err(_) => Ok(warp::reply::with_status(
-                        "Channel send failed",
-                        warp::http::StatusCode::REQUEST_TIMEOUT,
-                    )),
+                    Err(e) => {
+                        error!("Error parsing inform message: {:?}", e);
+                        Ok(warp::reply::with_status(
+                            "Error parsing inform message",
+                            warp::http::StatusCode::BAD_REQUEST,
+                        ))
+                    }
                 }
             } else {
                 Ok(warp::reply::with_status(
@@ -43,7 +56,7 @@ pub async fn inform(
             }
         }
         Err(e) => {
-            eprintln!("Error parsing XML: {:?}", e);
+            error!("Error parsing XML: {:?}", e);
             return Ok(warp::reply::with_status(
                 "Error parsing XML",
                 warp::http::StatusCode::BAD_REQUEST,
