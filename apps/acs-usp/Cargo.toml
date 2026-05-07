@@ -1,0 +1,10 @@
+[package]
+name = "acs-usp"
+version = "0.1.0"
+edition = "2021"
+authors = ["Jesper Dalberg"]
+license = "Unlicense"
+description = "A protocol component for managing devices using USP"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }

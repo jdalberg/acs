@@ -1,0 +1,11 @@
+[package]
+name = "nats-common"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-nats = "0.34"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
