@@ -1,183 +1,116 @@
-use env_logger::init;
-use log::{error, info};
-use models::{EventMessage, PolicyMessage};
-use rdkafka::consumer::{Consumer, StreamConsumer};
-use rdkafka::message::Message;
-use rdkafka::producer::{FutureProducer, FutureRecord};
-use rdkafka::ClientConfig;
-use tokio::time::Duration;
-use tokio_stream::StreamExt;
+use clap::Parser;
+use redis::Client as RedisClient;
+use std::sync::Arc;
+use tracing::{error, info};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use warp::Filter;
 
-mod errors;
-mod handlers;
-mod models;
-mod routes;
+mod session;
 
-/// Consume policy events from a Kafka topic, these events are produced by Core
-/// when a new session is created or updated.
-///
-/// Send the received events through a tokio channel to the main thread.
-///
-/// # Arguments
-///     * `topic` - The Kafka topic to consume messages from
-///     * `partition` - The partition to consume messages from, defaults to all. The idea is to have a stateful set decide the partition for each pod.
-///     * `tx` - The tokio channel sender to send the received messages to the main thread
-async fn run_queue_consumer(
-    topic: &str,
-    partition: u16,
-    tx: tokio::sync::mpsc::Sender<PolicyMessage>,
-) {
-    let consumer: StreamConsumer = ClientConfig::new()
-        .set("bootstrap.servers", "127.0.0.1:29092")
-        .set("group.id", "nuuday-acs-instances")
-        .set("enable.partition.eof", "false")
-        .set("session.timeout.ms", "6000")
-        .set("enable.auto.commit", "true")
-        .create()
-        .expect("Consumer creation failed");
+#[derive(Parser, Debug, Clone)]
+#[command(author, version, about, long_about = None)]
+pub struct Config {
+    /// The URL of the Redis server
+    #[arg(long, env = "REDIS_URL", default_value = "redis://127.0.0.1/")]
+    pub redis_url: String,
 
-    consumer
-        .subscribe(&[topic])
-        .expect("Failed to subscribe to topic");
+    /// The URL of the NATS server
+    #[arg(long, env = "NATS_URL", default_value = "nats://127.0.0.1:4222")]
+    pub nats_url: String,
 
-    let mut message_stream = consumer.stream();
-
-    info!("Consuming policy event messages...");
-
-    while let Some(result) = message_stream.next().await {
-        match result {
-            Ok(borrowed_message) => {
-                let payload = borrowed_message.payload().unwrap_or(&[]);
-                println!("Received message: {:?}", String::from_utf8_lossy(payload));
-
-                // You can manually commit offsets or rely on auto-commit
-            }
-            Err(e) => {
-                eprintln!("Error while receiving message: {:?}", e);
-            }
-        }
-    }
+    /// The port to run the web server on
+    #[arg(short, long, env = "PORT", default_value_t = 8080)]
+    pub port: u16,
 }
+// use async_nats::Client as NatsClient;
 
-async fn run_event_producer(
-    upstream_event_topic: &str,
-    upstream_event_partition: u16,
-    mut rx: tokio::sync::mpsc::Receiver<EventMessage>,
-) {
-    // Create the Kafka producer
-    let producer: FutureProducer = ClientConfig::new()
-        .set("bootstrap.servers", "localhost:29092")
-        .set("message.timeout.ms", "5000")
-        .create()
-        .expect("Producer creation error");
-
-    info!("Starting event producer task...");
-
-    // Listen for messages on the Receiver channel
-    while let Some(event) = rx.recv().await {
-        let key = event.kafka_key();
-        let payload = event.as_kafka_message();
-
-        let produce_result = producer
-            .send(
-                FutureRecord::to(upstream_event_topic)
-                    .key(&key)
-                    .payload(&payload),
-                Duration::from_secs(0),
-            )
-            .await;
-
-        match produce_result {
-            Ok(delivery) => println!("Message delivered: {:?}", delivery),
-            Err((e, _)) => eprintln!("Error while sending message: {:?}", e),
-        }
-    }
-}
-
-async fn empty_queues() {
-    // Empty the queues
-}
-
-async fn run_web_server(
-    controller_endpoint: &str,
-    event_tx: tokio::sync::mpsc::Sender<EventMessage>,
-) {
-    let routes = routes::build_routes(event_tx);
-
-    info!("Starting web service task...");
-
-    // Start the web server
-    warp::serve(routes).run(([127, 0, 0, 1], 8080)).await;
+#[derive(Clone)]
+struct AppState {
+    redis: RedisClient,
+    // nats: NatsClient,
 }
 
 #[tokio::main]
-async fn main() {
-    init();
-    // Create tokio channels for the web server and Kafka consumer tasks
-    let (event_tx, event_rx) = tokio::sync::mpsc::channel(100);
-    let (policy_tx, mut policy_rx) = tokio::sync::mpsc::channel(100);
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize JSON logging for Elasticsearch
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new(
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
+        ))
+        .with(tracing_subscriber::fmt::layer().json())
+        .init();
+    // Parse configuration from command line and environment variables
+    let config = Config::parse();
 
-    // Read the queue topic and partiopn from the environment
-    let policy_events_queue_topic = std::env::var("KAFKA_POLICY_QUEUE_TOPIC")
-        .unwrap_or_else(|_| "nuuacs-policy-events".to_string());
-    let policy_event_queue_partition = std::env::var("KAFKA_POLICY_QUEUE_PARTITION")
-        .unwrap_or_else(|_| "0".to_string())
-        .parse::<u16>()
-        .unwrap_or(0);
+    info!("Starting acs-cwmp service on port {}...", config.port);
 
-    let incoming_events_topic = std::env::var("KAFKA_INFORM_EVENTS_TOPIC")
-        .unwrap_or_else(|_| "nuuacs-inform-events".to_string());
-    let incoming_events_partition = std::env::var("KAFKA_INFORM_EVENTS_PARTITION")
-        .unwrap_or_else(|_| "0".to_string())
-        .parse::<u16>()
-        .unwrap_or(0);
+    // 1. Initialize Redis for Session State
+    info!("Connecting to Redis at {}", config.redis_url);
+    let redis_client = RedisClient::open(config.redis_url.clone())?;
 
-    // Read the configuration controller endpoint from the environment
-    let controller_endpoint = std::env::var("CONTROLLER_ENDPOINT")
-        .unwrap_or_else(|_| "http://localhost:8080".to_string());
+    // 2. Initialize NATS for IPC
+    // info!("Connecting to NATS at {}", config.nats_url);
+    // let nats_client = async_nats::connect(&config.nats_url).await?;
 
-    let pod_name = std::env::var("POD_NAME").unwrap_or_else(|_| String::from("dev_pod"));
+    // App State to share across routes
+    let state = Arc::new(AppState {
+        redis: redis_client,
+        // nats: nats_client,
+    });
 
-    // Create a new Kafka comsumer task
-    let mut queue_consumer = Box::pin(run_queue_consumer(
-        &policy_events_queue_topic,
-        policy_event_queue_partition,
-        policy_tx,
-    ));
+    // Extract state filter for Warp
+    let state_filter = warp::any().map(move || state.clone());
 
-    // Run the web server task to take new sessions from the network
-    let mut web_server = Box::pin(run_web_server(&controller_endpoint, event_tx));
+    // 3. Define Warp Routes
+    // A simple health check route
+    let health_route = warp::path!("health")
+        .and(warp::get())
+        .map(|| warp::reply::json(&"OK"));
 
-    // Run the event producer
-    let mut event_producer = Box::pin(run_event_producer(
-        &incoming_events_topic,
-        incoming_events_partition,
-        event_rx,
-    ));
+    // The main CWMP endpoint
+    let cwmp_route = warp::path!("cwmp")
+        .and(warp::post())
+        .and(warp::header::optional::<String>("cookie"))
+        .and(warp::body::bytes())
+        .and(state_filter.clone())
+        .and_then(handle_cwmp_request);
 
-    // Setup the channel interactions
-    loop {
-        tokio::select! {
-            q_result = &mut queue_consumer => {
-                // queue consumer died, log the error and stop all other tasks then exit
-                error!("Queue consumer task failed: {:?}", q_result);
-                break;
-            },
-            w_result = &mut web_server => {
-                // queue consumer died, log the error and stop all other tasks then exit
-                error!("Web server task failed: {:?}", w_result);
-                break;
-            },
-            e_result = &mut event_producer => {
-                // event producer died, log the error and stop all other tasks then exit
-                error!("Event producer task failed: {:?}", e_result);
-                break;
-            },
-            Some(policy_event) = policy_rx.recv() => {
-                // Send the policy event to the web server
-                info!("Received policy event: {:?}", policy_event);
-            },
+    let routes = health_route.or(cwmp_route);
 
+    // 4. Start HTTP Server
+    info!("Listening on http://0.0.0.0:{}", config.port);
+    warp::serve(routes).run(([0, 0, 0, 0], config.port)).await;
+
+    Ok(())
+}
+
+async fn handle_cwmp_request(
+    cookie: Option<String>,
+    body: bytes::Bytes,
+    state: Arc<AppState>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    info!("Received CWMP request. Cookie: {:?}", cookie);
+    // TODO: Parse the CWMP XML body
+    // TODO: Manage session state via state.redis
+    // TODO: Dispatch abstract events via state.nats
+    // Parse the incoming XML payload
+    match cwmp::parse_bytes(body.as_ref()) {
+        Ok(parsed_envelope) => {
+            // handle the parsed envelope if it is an inform
+            if parsed_envelope.is_inform() {
+                // Send the event upstream
+            }
+        }
+        Err(e) => {
+            error!("Error parsing XML: {:?}", e);
+            return Ok(warp::reply::with_status(
+                "Error parsing XML",
+                warp::http::StatusCode::BAD_REQUEST,
+            ));
         }
     }
+    Ok(warp::reply::with_status(
+        "CWMP Handler Stub",
+        warp::http::StatusCode::OK,
+    ))
 }
