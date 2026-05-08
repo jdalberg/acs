@@ -1,10 +1,11 @@
 use clap::Parser;
 use redis::Client as RedisClient;
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use warp::Filter;
 
+mod handlers;
 mod session;
 
 #[derive(Parser, Debug, Clone)]
@@ -23,12 +24,6 @@ pub struct Config {
     pub port: u16,
 }
 // use async_nats::Client as NatsClient;
-
-#[derive(Clone)]
-struct AppState {
-    redis: RedisClient,
-    // nats: NatsClient,
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -53,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let nats_client = async_nats::connect(&config.nats_url).await?;
 
     // App State to share across routes
-    let state = Arc::new(AppState {
+    let state = Arc::new(handlers::AppState {
         redis: redis_client,
         // nats: nats_client,
     });
@@ -73,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and(warp::header::optional::<String>("cookie"))
         .and(warp::body::bytes())
         .and(state_filter.clone())
-        .and_then(handle_cwmp_request);
+        .and_then(handlers::handle_cwmp_request);
 
     let routes = health_route.or(cwmp_route);
 
@@ -82,35 +77,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     warp::serve(routes).run(([0, 0, 0, 0], config.port)).await;
 
     Ok(())
-}
-
-async fn handle_cwmp_request(
-    cookie: Option<String>,
-    body: bytes::Bytes,
-    state: Arc<AppState>,
-) -> Result<impl warp::Reply, warp::Rejection> {
-    info!("Received CWMP request. Cookie: {:?}", cookie);
-    // TODO: Parse the CWMP XML body
-    // TODO: Manage session state via state.redis
-    // TODO: Dispatch abstract events via state.nats
-    // Parse the incoming XML payload
-    match cwmp::parse_bytes(body.as_ref()) {
-        Ok(parsed_envelope) => {
-            // handle the parsed envelope if it is an inform
-            if parsed_envelope.is_inform() {
-                // Send the event upstream
-            }
-        }
-        Err(e) => {
-            error!("Error parsing XML: {:?}", e);
-            return Ok(warp::reply::with_status(
-                "Error parsing XML",
-                warp::http::StatusCode::BAD_REQUEST,
-            ));
-        }
-    }
-    Ok(warp::reply::with_status(
-        "CWMP Handler Stub",
-        warp::http::StatusCode::OK,
-    ))
 }
