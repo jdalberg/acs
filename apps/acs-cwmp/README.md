@@ -5,12 +5,25 @@ This is a component of an ACS server. It can handle a CWMP session with a device
 
 ```mermaid
 flowchart TD;
-    dev((devices))--event-->acs((ACS));
-    acs--policyresponse-->kafka((kafka));;
-    acs--event-->kafka
-    kafka--event-->pm((PolicyManager))
-    kafka--policyevent-->acs;
-    pm--policyevent-->kafka;
+    cpe((CPE / Device))
+    cwmp((acs-cwmp))
+    redis[(Redis)]
+    nats{{NATS}}
+    upstream((Upstream / Core))
+
+    cpe -- HTTP Inform / Events --> cwmp
+    cwmp -- Store session & cookies --> redis
+    redis -- Restore session & cookies --> cwmp
+
+    cwmp -- Normalized AbstractEvent --> nats
+    nats -- Operation Queue / END --> cwmp
+
+    cwmp -- CWMP Response --> cpe
+
+    nats --> upstream
+    upstream --> nats
+
+    cwmp -- Session END\nor Timeout --> cpe
 ```
 
 ## External influences
