@@ -1,0 +1,21 @@
+[package]
+name = "cpe-mock-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.43.1", features = ["full"] }
+warp = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+reqwest = { version = "0.12", features = ["json"] }
+bytes = "1.0"
+chrono = "0.4"
+quick-xml = "0.23"
+log = "0.4"
+env_logger = "0.11"
+cwmp = { version = "0.2.6", git = "https://github.com/jdalberg/cwmp" }
+lazy_static = "1.5.0"
+
+[dev-dependencies]
+tokio-test = "0.4"

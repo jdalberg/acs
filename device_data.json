@@ -1,0 +1,15 @@
+{
+  "serial_number": "123456789",
+  "custom_info": "DefaultCustomInfo",
+  "software_version": "1.0.0",
+  "hardware_version": "1.0",
+  "oui": "000000",
+  "manufacturer": "ExampleCorp",
+  "product_class": "ExampleDevice",
+  "acs_url": "http://127.0.0.1:7548/ACS-server/event/",
+  "connection_request_url": "http://127.0.0.1:7547/connection",
+  "parameter_key": "default_key",
+  "Other": {
+    "Device.Other.Param1": "default_value1"
+  }
+}
