@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "apps/acs-cwmp",
     "apps/acs-usp",
+    "apps/mock-client",
     "libs/nats-common",
 ]
 
