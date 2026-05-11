@@ -6,6 +6,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use warp::Filter;
 
 mod handlers;
+mod nats;
 mod session;
 
 #[derive(Parser, Debug, Clone)]
@@ -23,7 +24,8 @@ pub struct Config {
     #[arg(short, long, env = "PORT", default_value_t = 8080)]
     pub port: u16,
 }
-// use async_nats::Client as NatsClient;
+use crate::nats::NatsClient;
+use crate::session::new_session_map;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -44,13 +46,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let redis_client = RedisClient::open(config.redis_url.clone())?;
 
     // 2. Initialize NATS for IPC
-    // info!("Connecting to NATS at {}", config.nats_url);
-    // let nats_client = async_nats::connect(&config.nats_url).await?;
+    info!("Connecting to NATS at {}", config.nats_url);
+    let nats_inner = async_nats::connect(&config.nats_url).await?;
+    let nats_client = NatsClient::new(nats_inner);
 
     // App State to share across routes
     let state = Arc::new(handlers::AppState {
         redis: redis_client,
-        // nats: nats_client,
+        nats: nats_client,
+        sessions: new_session_map(),
     });
 
     // Extract state filter for Warp
