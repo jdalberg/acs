@@ -1,52 +1,49 @@
-use redis::AsyncCommands;
-use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CwmpSession {
-    pub device_id: String,
-    pub current_state: String,
-    // Add other state data like pending operations
+use async_nats::Subscriber;
+use cwmp::protocol::DeviceId;
+use dashmap::DashMap;
+use tokio::sync::Mutex;
+
+/// Represents one active CWMP session with a CPE device.
+///
+/// The session is created when an Inform is received and removed when
+/// the session ends (timeout, CPE disconnect, or empty response sent).
+///
+/// Dropping this struct automatically unsubscribes from the NATS command
+/// subject, since `Subscriber` cleans up on drop.
+pub struct Session {
+    /// Unique session identifier, used as the NATS routing key:
+    /// `acs.sessions.{session_id}.command`
+    pub session_id: String,
+
+    /// The device that owns this session.
+    pub device_id: DeviceId,
+
+    /// NATS subscriber for commands directed at this session.
+    /// Taken out before awaiting so we don't hold the Mutex across an await.
+    /// Replaced after the await completes.
+    pub command_sub: Option<Subscriber>,
 }
 
-#[derive(Clone)]
-pub struct SessionStore {
-    client: redis::Client,
-}
-
-impl SessionStore {
-    pub fn new(redis_url: &str) -> Result<Self, redis::RedisError> {
-        let client = redis::Client::open(redis_url)?;
-        Ok(Self { client })
-    }
-
-    /// Save a session to Redis with a TTL (e.g., 60 seconds)
-    pub async fn save_session(
-        &self,
-        session_id: &str,
-        session: &CwmpSession,
-    ) -> Result<(), redis::RedisError> {
-        let mut con = self.client.get_async_connection().await?;
-        let serialized = serde_json::to_string(session).unwrap();
-
-        // SETEX: Set Key, TTL, and Value atomically
-        con.set_ex(format!("session:{}", session_id), serialized, 60)
-            .await?;
-        Ok(())
-    }
-
-    /// Retrieve a session from Redis
-    pub async fn get_session(
-        &self,
-        session_id: &str,
-    ) -> Result<Option<CwmpSession>, redis::RedisError> {
-        let mut con = self.client.get_async_connection().await?;
-        let value: Option<String> = con.get(format!("session:{}", session_id)).await?;
-
-        if let Some(json) = value {
-            let session: CwmpSession = serde_json::from_str(&json).unwrap();
-            Ok(Some(session))
-        } else {
-            Ok(None)
+impl Session {
+    pub fn new(session_id: String, device_id: DeviceId, command_sub: Subscriber) -> Self {
+        Self {
+            session_id,
+            device_id,
+            command_sub: Some(command_sub),
         }
     }
+}
+
+/// Thread-safe, in-process store of all active sessions on this pod.
+///
+/// Sessions are keyed by `session_id` (= the cookie value sent to the CPE).
+/// When a session is removed, its `Session` is dropped and the NATS
+/// subscription is automatically cancelled.
+pub type SessionMap = Arc<DashMap<String, Arc<Mutex<Session>>>>;
+
+/// Construct a new empty session map.
+pub fn new_session_map() -> SessionMap {
+    Arc::new(DashMap::new())
 }
