@@ -53,8 +53,8 @@ impl DeviceInfo {
     }
 
     pub fn create_default() -> Self {
-        let acs_url = env::var("ACS_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:7548/ACS-server/event/".to_string());
+        let acs_url =
+            env::var("ACS_URL").unwrap_or_else(|_| "http://127.0.0.1:7548/cwmp".to_string());
         let connection_request_url = env::var("CPE_CONNECTION_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:7547/connection".to_string());
         let parameter_key =
