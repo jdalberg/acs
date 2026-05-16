@@ -10,23 +10,24 @@ description = "An ACS server"
 tokio = { workspace = true }
 tokio-stream = "0.1.16"
 warp = "^0.3"
-jsonwebtoken = { version = "^9", features = ["use_pem"]}
 chrono = "^0.4"
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-clap = { workspace = true }
+clap.workspace = true
 thiserror = "1"
-serde_json = "^1"
+serde_json = { workspace = true }
 serde_derive = "^1"
-serde = "^1"
+serde = { workspace = true }
 rand = "^0.8"
 url = "^2.2"
 serde-xml-rs = "^0.6"
 reqwest = { "version" = "0.12", default_features=false, features = ["rustls-tls"]}
-rdkafka = { version = "0.36", features = ["cmake-build", "tokio"] }
 cwmp = { git = "ssh://git@github.com/jdalberg/cwmp.git", tag = "0.2.4"}
 redis = { version = "0.24", features = ["tokio-comp", "json"] }
 bytes = "1"
+dashmap = "^6"
+async-nats.workspace = true
+nats-common = { path = "../../libs/nats-common" }
 
 [dependencies.uuid]
 version = "^1"
