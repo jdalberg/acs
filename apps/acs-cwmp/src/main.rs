@@ -22,7 +22,7 @@ pub struct Config {
     pub nats_url: String,
 
     /// The port to run the web server on
-    #[arg(short, long, env = "PORT", default_value_t = 8080)]
+    #[arg(short, long, env = "PORT", default_value_t = 7548)]
     pub port: u16,
 }
 use crate::nats::NatsClient;
