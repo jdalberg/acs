@@ -5,6 +5,7 @@ use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use warp::Filter;
 
+mod cwmp_translate;
 mod handlers;
 mod nats;
 mod session;
