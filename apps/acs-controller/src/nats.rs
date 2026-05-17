@@ -37,4 +37,16 @@ impl NatsClient {
     pub async fn subscribe_events(&self) -> Result<Subscriber, async_nats::SubscribeError> {
         self.inner.subscribe("acs.events.>").await
     }
+
+    /// Publish a command to a specific session.
+    ///
+    /// Subject: `acs.sessions.{session_id}.command`
+    pub async fn publish_command(
+        &self,
+        session_id: &str,
+        payload: impl Into<bytes::Bytes>,
+    ) -> Result<(), async_nats::PublishError> {
+        let subject = format!("acs.sessions.{}.command", session_id);
+        self.inner.publish(subject, payload.into()).await
+    }
 }

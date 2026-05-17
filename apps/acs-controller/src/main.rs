@@ -13,6 +13,7 @@ use uuid::Uuid;
 mod db;
 mod handlers;
 mod nats;
+mod provisioning;
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -41,6 +42,9 @@ pub struct Config {
     /// Maximum number of PostgreSQL connections to keep open.
     #[arg(long, env = "DB_MAX_CONNECTIONS", default_value_t = 5)]
     pub db_max_connections: u32,
+    /// Directory containing python provisioning scripts.
+    #[arg(long, env = "PROVISIONING_ROOT", default_value = "./provisioning")]
+    pub provisioning_root: std::path::PathBuf,
 }
 
 // ── Entrypoint ────────────────────────────────────────────────────────────────
@@ -73,7 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "acs-controller ready — entering event loop",
     );
 
-    event_loop(nats, pool, config.default_domain_id).await;
+    event_loop(nats, pool, config).await;
 
     Ok(())
 }
@@ -84,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///
 /// Loops forever until the NATS connection drops. Event type is derived from
 /// the last token of the NATS subject so no separate metadata field is needed.
-async fn event_loop(nats: nats::NatsClient, pool: sqlx::PgPool, default_domain_id: Uuid) {
+async fn event_loop(nats: nats::NatsClient, pool: sqlx::PgPool, config: Config) {
     let mut subscriber = match nats.subscribe_events().await {
         Ok(s) => s,
         Err(e) => {
@@ -103,7 +107,7 @@ async fn event_loop(nats: nats::NatsClient, pool: sqlx::PgPool, default_domain_i
         match event_type {
             "inform" => {
                 if let Err(e) =
-                    handlers::inform::handle_inform(&msg.payload, &pool, default_domain_id).await
+                    handlers::inform::handle_inform(&msg.payload, &pool, &nats, &config).await
                 {
                     error!(subject, ?e, "inform handler failed");
                 }

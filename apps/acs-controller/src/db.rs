@@ -117,3 +117,12 @@ pub async fn upsert_device(
 
     Ok(())
 }
+
+/// Fetches the domain slug for a given domain ID.
+pub async fn get_domain_slug(pool: &PgPool, domain_id: Uuid) -> Result<String, sqlx::Error> {
+    let row: (String,) = sqlx::query_as("SELECT slug FROM domains WHERE id = $1")
+        .bind(domain_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(row.0)
+}
