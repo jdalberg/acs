@@ -35,3 +35,15 @@ CREATE INDEX idx_users_email ON users(email);
 COMMENT ON TABLE  users               IS 'Platform users. Domain-level roles are in domain_memberships.';
 COMMENT ON COLUMN users.is_super_admin IS 'Platform-wide admin flag. Checked without a join for performance.';
 COMMENT ON COLUMN users.password_hash  IS 'bcrypt/argon2id hash. NULL for external-IdP-only accounts.';
+
+-- Ensure at least one user exists (the super admin that creates domains).
+-- If no users have been created yet, insert a default super admin.
+-- This user is NOT created by the current migration so it needs to be inserted here.
+
+INSERT INTO users (email, password_hash, display_name, is_super_admin)
+VALUES (
+    'admin@localhost',
+    '$argon2id$v=19$m=4096,t=3,p=1$UqK0qR/p+6s8b00h/N4gNA$L0JjJ4/e3f5b+e6f7g8h9i0j1k2l3m4n5o6p7q8r9s0t1u2v3w4x5y6z7a8b9c0d1e2',
+    'Admin',
+    true
+) ON CONFLICT DO NOTHING;

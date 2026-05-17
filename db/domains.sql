@@ -21,3 +21,7 @@ CREATE TABLE domains (
 COMMENT ON TABLE  domains            IS 'Top-level tenancy unit; every device and profile is scoped to a domain.';
 COMMENT ON COLUMN domains.slug       IS 'URL-safe identifier (lowercase, hyphens). Used in NATS subjects and API routes.';
 COMMENT ON COLUMN domains.updated_at IS 'Updated by application logic on any column change.';
+
+-- Initialize default domain if not present.
+INSERT INTO domains (name, slug) VALUES ('Default', 'default') ON CONFLICT DO NOTHING;
+
