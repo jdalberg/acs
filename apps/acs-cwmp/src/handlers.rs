@@ -326,6 +326,7 @@ async fn handle_inform_post(
         "serial_number": &device_id.serial_number.0,
         "manufacturer": &device_id.manufacturer.0,
         "product_class": &device_id.product_class.0,
+        "protocol": "cwmp",
         "events": inform.event.iter()
             .map(|e| format!("{} {}", e.event_code.0, e.command_key.0))
             .collect::<Vec<_>>(),
