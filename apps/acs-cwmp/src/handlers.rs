@@ -270,6 +270,22 @@ fn empty_xml_reply() -> Box<dyn warp::Reply> {
     )
 }
 
+/// Called when a CPE opens a new CWMP session with an Inform message.
+///
+/// Flow:
+/// 1. Allocate a fresh `session_id` UUID.
+/// 2. Subscribe to the NATS command subject for this session *before* we store
+///    the session, so no command can arrive before we're ready to receive it.
+///    If the subscribe fails we have no session to clean up — return 503.
+/// 3. Store the new [`Session`] in the in-memory map.
+/// 4. Publish the `inform` lifecycle event so the controller can react.
+///    A publish failure is logged but non-fatal: the CPE is still in session and
+///    the controller can recover via the next event.
+/// 5. Reply with `InformResponse` and set the `session` cookie so subsequent
+///    POSTs are routed to this session.
+///
+/// Note: the CPE will immediately follow up with an empty POST — that is handled
+/// by [`handle_empty_post`] which calls [`poll_next_command`].
 async fn handle_inform_post(
     state: Arc<AppState>,
     inform: &cwmp::protocol::Inform,
@@ -277,25 +293,31 @@ async fn handle_inform_post(
 ) -> Result<Box<dyn warp::Reply>, warp::Rejection> {
     let session_id = Uuid::new_v4().to_string();
     let device_id = inform.device_id.clone();
-    debug!(
-        "Parsed Inform message, generated new session-id: {}",
-        session_id
-    );
 
+    // ── 1. Subscribe to commands *before* storing the session ─────────────────
+    // This ensures no command can be lost in the window between session creation
+    // and subscription setup.
     let command_sub = match state.nats.subscribe_commands(&session_id).await {
         Ok(sub) => sub,
         Err(e) => {
-            error!("Failed to subscribe to commands: {:?}", e);
-            return Err(warp::reject::reject());
+            error!(session_id, ?e, "Failed to subscribe to NATS command subject");
+            // No session has been stored yet, so nothing to clean up.
+            return Ok(Box::new(warp::reply::with_status(
+                "Service unavailable",
+                warp::http::StatusCode::SERVICE_UNAVAILABLE,
+            )));
         }
     };
 
+    // ── 2. Store the session ──────────────────────────────────────────────────
     let session_state = Session::new(session_id.clone(), device_id.clone(), command_sub);
     state.sessions.insert(
         session_id.clone(),
         Arc::new(tokio::sync::Mutex::new(session_state)),
     );
+    debug!(session_id, oui = %device_id.oui.0, serial = %device_id.serial_number.0, "New session created");
 
+    // ── 3. Publish `inform` lifecycle event ───────────────────────────────────
     // cwmp types don't implement serde::Serialize, so we build the JSON manually.
     let payload = serde_json::json!({
         "session_id": &session_id,
@@ -312,6 +334,7 @@ async fn handle_inform_post(
             .collect::<std::collections::HashMap<_, _>>(),
     })
     .to_string();
+
     if let Err(e) = state
         .nats
         .publish_event(
@@ -322,9 +345,12 @@ async fn handle_inform_post(
         )
         .await
     {
-        error!("Failed to publish inform event to NATS: {:?}", e);
+        // Non-fatal: the session is live; the CPE will continue the exchange.
+        // The controller can detect the missing inform via a heartbeat timeout.
+        error!(session_id, ?e, "Failed to publish inform event to NATS");
     }
 
+    // ── 4. Build InformResponse and set session cookie ────────────────────────
     let id = header_element
         .and_then(|header| match header {
             HeaderElement::ID(id) => Some(id.clone()),
@@ -332,11 +358,11 @@ async fn handle_inform_post(
         })
         .unwrap_or_else(|| cwmp::protocol::ID::new(false, ""));
 
-    let body_bytes = build_plain_inform_response_body(&id);
+    let body = build_plain_inform_response_body(&id);
     let mut response = Response::builder()
         .status(warp::http::StatusCode::OK)
         .header("Content-Type", "text/xml; charset=utf-8")
-        .body(body_bytes)
+        .body(bytes::Bytes::from(body))
         .unwrap();
 
     let cookie_header = format!("session={session_id}; HttpOnly; Path=/; Max-Age=3600");
