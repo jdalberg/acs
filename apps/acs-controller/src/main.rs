@@ -10,6 +10,7 @@ use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
 
+mod api;
 mod db;
 mod handlers;
 mod nats;
@@ -45,6 +46,10 @@ pub struct Config {
     /// Directory containing python provisioning scripts.
     #[arg(long, env = "PROVISIONING_ROOT", default_value = "./provisioning")]
     pub provisioning_root: std::path::PathBuf,
+
+    /// HTTP API Port.
+    #[arg(long, env = "API_PORT", default_value_t = 8080)]
+    pub api_port: u16,
 }
 
 // ── Entrypoint ────────────────────────────────────────────────────────────────
@@ -74,10 +79,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!(
         default_domain_id = %config.default_domain_id,
-        "acs-controller ready — entering event loop",
+        "acs-controller ready — starting services",
     );
 
-    event_loop(nats, pool, config).await;
+    let state = api::ApiState::new(pool.clone(), nats.clone());
+
+    // Start HTTP API
+    let api_state = state.clone();
+    let api_port = config.api_port;
+    tokio::spawn(async move {
+        if let Err(e) = api::start_server(api_state, api_port).await {
+            error!(?e, "HTTP API server failed");
+        }
+    });
+
+    event_loop(nats, pool, config, state).await;
 
     Ok(())
 }
@@ -88,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///
 /// Loops forever until the NATS connection drops. Event type is derived from
 /// the last token of the NATS subject so no separate metadata field is needed.
-async fn event_loop(nats: nats::NatsClient, pool: sqlx::PgPool, config: Config) {
+async fn event_loop(nats: nats::NatsClient, pool: sqlx::PgPool, config: Config, state: api::ApiState) {
     let mut subscriber = match nats.subscribe_events().await {
         Ok(s) => s,
         Err(e) => {
@@ -107,22 +123,43 @@ async fn event_loop(nats: nats::NatsClient, pool: sqlx::PgPool, config: Config) 
         match event_type {
             "inform" => {
                 if let Err(e) =
-                    handlers::inform::handle_inform(&msg.payload, &pool, &nats, &config).await
+                    handlers::inform::handle_inform(&msg.payload, &pool, &nats, &config, &state).await
                 {
                     error!(subject, ?e, "inform handler failed");
                 }
             }
 
             "command_response" => {
-                // Future: look up the session, correlate the response UUID,
-                // publish result back to the originating API caller.
-                info!(subject, "command_response received — handler not yet implemented");
+                let payload = match serde_json::from_slice::<nats_common::DeviceResponse>(&msg.payload) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        error!(?e, "Failed to deserialize DeviceResponse");
+                        continue;
+                    }
+                };
+
+                if let Some(op_id) = payload.operation_id {
+                    if let Some((_, sender)) = state.pending_commands.remove(&op_id) {
+                        let _ = sender.send(payload);
+                    }
+                } else {
+                    info!(subject, ?payload, "command_response received without operation_id");
+                }
             }
 
             "session_ended" => {
-                // Future: close any pending commands for this session,
-                // update last_seen in devices.
-                info!(subject, "session_ended received — handler not yet implemented");
+                // Determine device UID from the subject.
+                // Subject is acs.events.{oui}.{serial}.session_ended
+                let parts: Vec<&str> = subject.split('.').collect();
+                if parts.len() >= 5 {
+                    let oui = parts[2];
+                    let serial = parts[3];
+                    let device_uid = format!("{}-{}", oui, serial);
+                    state.active_sessions.remove(&device_uid);
+                    info!(device_uid, "Session ended, removed from active sessions");
+                }
+                
+                // Future: update last_seen in devices.
             }
 
             other => {

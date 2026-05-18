@@ -15,6 +15,11 @@ tracing-subscriber = { workspace = true }
 clap        = { workspace = true }
 async-nats  = { workspace = true }
 nats-common = { path = "../../libs/nats-common" }
+axum        = "0.7"
+tower-http  = { version = "0.6", features = ["cors"] }
+dashmap     = "6"
+chrono      = { version = "0.4", features = ["serde"] }
+
 
 # Async PostgreSQL with compile-time-optional query checking.
 # Run `cargo sqlx prepare` against a live DB to enable offline mode.
@@ -23,6 +28,7 @@ sqlx = { version = "0.8", features = [
     "tls-rustls",
     "postgres",
     "uuid",
+    "chrono",
 ] }
 
 tokio-stream = "0.1"

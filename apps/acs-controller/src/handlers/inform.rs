@@ -25,6 +25,7 @@ pub async fn handle_inform(
     pool: &sqlx::PgPool,
     nats: &NatsClient,
     config: &Config,
+    state: &crate::api::ApiState,
 ) -> anyhow::Result<()> {
     let payload: InformPayload =
         serde_json::from_slice(raw).context("Failed to deserialise InformPayload")?;
@@ -49,6 +50,9 @@ pub async fn handle_inform(
         hardware_version = ?payload.hardware_version(),
         "Device upserted successfully",
     );
+
+    state.active_sessions.insert(payload.device_id.clone(), payload.session_id.clone());
+    info!(device_id = %payload.device_id, "Session recorded in active sessions");
 
     let domain_slug = db::get_domain_slug(pool, config.default_domain_id)
         .await

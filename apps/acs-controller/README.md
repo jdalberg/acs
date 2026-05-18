@@ -61,6 +61,34 @@ actions = [
 print(json.dumps(actions))
 ```
 
+## HTTP API
+
+The controller exposes a synchronous HTTP API for manipulating database objects and sending real-time commands to connected devices. This API is designed to support GUI development and enables Cross-Origin Resource Sharing (CORS) out of the box.
+
+### Inventory Endpoints
+
+These endpoints interact directly with the PostgreSQL database.
+
+*   **`GET /api/v1/inventory/devices`**
+    Lists all devices known to the ACS, including their manufacturer, OUI, serial number, and last seen timestamp.
+*   **`GET /api/v1/inventory/devices/:uid`**
+    Retrieves detailed information for a specific device by its UID (e.g., `{oui}-{serial_number}`).
+*   **`GET /api/v1/inventory/domains`**
+    Lists all domains configured in the system.
+
+### Device Endpoints
+
+These endpoints interact with devices over NATS.
+
+*   **`POST /api/v1/device/:uid/command`**
+    Sends a command to a connected device and synchronously awaits its response.
+    *   **Request Body**: A JSON representation of a `nats_common::Action` (e.g., `{"GetParameterValues": {"paths": ["Device.DeviceInfo."]}}`).
+    *   **Behavior**:
+        1. Verifies the device is currently online (has an active session). If not, returns `400 Bad Request`.
+        2. Publishes the command to the appropriate NATS subject (`acs.sessions.{session_id}.command`).
+        3. Awaits the `command_response` from the NATS event stream.
+        4. Returns the exact response from the device, or `504 Gateway Timeout` if the device fails to respond within 30 seconds.
+
 ## Running the Controller
 
 ### Prerequisites
@@ -79,6 +107,7 @@ The controller is configured via environment variables or CLI flags:
 | `DATABASE_URL` | `--database-url` | (Required) | PostgreSQL connection string. |
 | `DEFAULT_DOMAIN_ID` | `--default-domain-id` | (Required) | UUID of the domain to assign to newly discovered devices. |
 | `PROVISIONING_ROOT` | `--provisioning-root` | `./provisioning` | Path to the directory containing Python scripts. |
+| `API_PORT`          | `--api-port`          | `8080`             | Port to bind the HTTP API server. |
 | `DB_MAX_CONNECTIONS` | `--db-max-connections` | `5` | Maximum number of open database connections. |
 
 ### Startup Example
