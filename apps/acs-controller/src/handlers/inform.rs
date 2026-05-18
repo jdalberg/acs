@@ -40,9 +40,18 @@ pub async fn handle_inform(
         "Inform received — upserting device",
     );
 
-    db::upsert_device(pool, &payload, config.default_domain_id)
+    let device_uuid = db::upsert_device(pool, &payload, config.default_domain_id)
         .await
         .context("Failed to upsert device in database")?;
+
+    // Extract connection request URL
+    let cr_url = payload.parameter_list.get("InternetGatewayDevice.ManagementServer.ConnectionRequestURL")
+        .or_else(|| payload.parameter_list.get("Device.ManagementServer.ConnectionRequestURL"));
+    if let Some(url) = cr_url {
+        db::upsert_device_protocol(pool, device_uuid, payload.effective_protocol(), url)
+            .await
+            .context("Failed to upsert device protocol")?;
+    }
 
     debug!(
         device_id        = %payload.device_id,

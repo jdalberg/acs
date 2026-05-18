@@ -8,7 +8,8 @@ CREATE TABLE device_protocols (
     connection_request_url TEXT,
     username               TEXT,
     last_session_at        TIMESTAMPTZ,
-    metadata               JSONB       NOT NULL DEFAULT '{}'
+    metadata               JSONB       NOT NULL DEFAULT '{}',
+    UNIQUE (device_id, protocol)
 );
 
 COMMENT ON TABLE  device_protocols                         IS 'Protocol-specific connection details for a device. A device may support multiple protocols (e.g. both CWMP and USP), one row per protocol.';

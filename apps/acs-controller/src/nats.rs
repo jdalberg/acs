@@ -49,4 +49,12 @@ impl NatsClient {
         let subject = format!("acs.sessions.{}.command", session_id);
         self.inner.publish(subject, payload.into()).await
     }
+
+    /// Request a disconnected device to reconnect by triggering a connection request.
+    ///
+    /// The `acs-connection-requester` app listens on this subject.
+    pub async fn publish_connection_request(&self, payload: Vec<u8>) -> anyhow::Result<()> {
+        let subject = "acs.connection.request";
+        self.inner.publish(subject, payload.into()).await.map_err(Into::into)
+    }
 }

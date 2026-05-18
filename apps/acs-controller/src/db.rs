@@ -77,8 +77,8 @@ pub async fn upsert_device(
     pool: &PgPool,
     payload: &InformPayload,
     default_domain_id: Uuid,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
+) -> Result<Uuid, sqlx::Error> {
+    let row: (Uuid,) = sqlx::query_as(
         r#"
         INSERT INTO devices (
             domain_id,
@@ -101,6 +101,7 @@ pub async fn upsert_device(
             current_protocol = EXCLUDED.current_protocol,
             software_version = COALESCE(EXCLUDED.software_version, devices.software_version),
             hardware_version = COALESCE(EXCLUDED.hardware_version, devices.hardware_version)
+        RETURNING id
         "#,
     )
     .bind(default_domain_id)
@@ -112,6 +113,34 @@ pub async fn upsert_device(
     .bind(payload.effective_protocol())
     .bind(payload.software_version()) // Option<&str> — NULL if not in parameter_list
     .bind(payload.hardware_version()) // Option<&str> — NULL if not in parameter_list
+    .fetch_one(pool)
+    .await?;
+
+    Ok(row.0)
+}
+
+/// Upserts connection parameters for a specific protocol.
+pub async fn upsert_device_protocol(
+    pool: &PgPool,
+    device_id: Uuid,
+    protocol: &str,
+    connection_request_url: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO device_protocols (
+            device_id,
+            protocol,
+            connection_request_url
+        )
+        VALUES ($1, $2, $3)
+        ON CONFLICT (device_id, protocol) DO UPDATE SET
+            connection_request_url = EXCLUDED.connection_request_url
+        "#,
+    )
+    .bind(device_id)
+    .bind(protocol)
+    .bind(connection_request_url)
     .execute(pool)
     .await?;
 

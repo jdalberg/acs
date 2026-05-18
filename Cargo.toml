@@ -4,6 +4,7 @@ members = [
     "apps/acs-cwmp",
     "apps/acs-controller",
     "apps/acs-usp",
+    "apps/acs-connection-requester",
     "apps/mock-client",
     "libs/nats-common",
 ]

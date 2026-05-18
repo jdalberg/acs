@@ -18,16 +18,70 @@ pub async fn send_command(
     Json(action): Json<Action>,
 ) -> impl IntoResponse {
     // 1. Check if the device is currently online
-    let session_id = match state.active_sessions.get(&uid) {
-        Some(s) => s.clone(),
+    let mut session_id_opt = state.active_sessions.get(&uid).map(|s| s.clone());
+
+    if session_id_opt.is_none() {
+        tracing::info!(%uid, "Device offline. Querying connection request details...");
+        
+        let row: Result<(Option<String>, Option<String>), sqlx::Error> = sqlx::query_as(
+            r#"
+            SELECT dp.connection_request_url, dp.username
+            FROM device_protocols dp
+            JOIN devices d ON dp.device_id = d.id
+            WHERE d.device_uid = $1 AND dp.protocol = 'cwmp'
+            "#,
+        )
+        .bind(&uid)
+        .fetch_one(&state.pool)
+        .await;
+
+        match row {
+            Ok((Some(url), username)) => {
+                let payload = serde_json::json!({
+                    "device_id": uid,
+                    "connection_request_url": url,
+                    "username": username,
+                    "password": Option::<String>::None // To be implemented if we store passwords
+                });
+                
+                if let Ok(bytes) = serde_json::to_vec(&payload) {
+                    if let Err(e) = state.nats.publish_connection_request(bytes).await {
+                        tracing::error!(?e, "Failed to publish connection request");
+                    } else {
+                        tracing::info!(%uid, "Published connection request, waiting for device...");
+                        
+                        // Poll for up to 15 seconds
+                        let timeout = tokio::time::Instant::now() + Duration::from_secs(15);
+                        while tokio::time::Instant::now() < timeout {
+                            if let Some(s) = state.active_sessions.get(&uid) {
+                                session_id_opt = Some(s.clone());
+                                break;
+                            }
+                            tokio::time::sleep(Duration::from_millis(250)).await;
+                        }
+                    }
+                }
+            }
+            Ok((None, _)) => {
+                tracing::warn!(%uid, "Device found but no connection request URL recorded.");
+            }
+            Err(e) => {
+                tracing::warn!(?e, %uid, "Failed to fetch connection request details.");
+            }
+        }
+    }
+
+    let session_id = match session_id_opt {
+        Some(s) => s,
         None => {
             return (
-                StatusCode::BAD_REQUEST,
-                "Device is not currently connected (no active session)",
+                StatusCode::GATEWAY_TIMEOUT,
+                "Device is not currently connected and failed to wake up",
             )
                 .into_response();
         }
     };
+
 
     // 2. Prepare the command and a oneshot channel to await the response
     let command_id = Uuid::new_v4();

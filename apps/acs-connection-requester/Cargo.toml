@@ -1,0 +1,17 @@
+[package]
+name = "acs-connection-requester"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-nats = { workspace = true }
+reqwest = { version = "0.12", features = ["json"] }
+clap = { workspace = true }
+anyhow = "1.0"
+uuid = { version = "1.0", features = ["v4"] }
+tokio-stream = "0.1"
