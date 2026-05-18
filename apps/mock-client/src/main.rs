@@ -49,10 +49,19 @@ async fn handle_acs_response(response: &str, command_tx: Sender<String>) {
         if let Err(e) = command_tx.send(response.to_string()).await {
             error!("Failed to send command: {}", e);
         }
+    } else if response.contains("GetParameterNames") {
+        if let Err(e) = command_tx.send(response.to_string()).await {
+            error!("Failed to send command: {}", e);
+        }
     } else if response.contains("Fault") {
         debug!("Fault response received: {}", response);
         DEVICE_INFO.lock().await.end_session();
-    } else if response.contains("InformResponse") || response.is_empty() {
+    } else if response.contains("InformResponse") {
+        // According to TR-069, after InformResponse we must send an Empty POST
+        if let Err(e) = command_tx.send("EMPTY_POST".to_string()).await {
+            error!("Failed to queue empty post: {}", e);
+        }
+    } else if response.is_empty() {
         DEVICE_INFO.lock().await.end_session();
     } else {
         error!("Unknown command received: {response}");
@@ -107,10 +116,10 @@ async fn send_message(message_body: &str, o_command_tx: Option<Sender<String>>) 
     }
 }
 
-async fn send_fault(code: i32, string: &str) {
+async fn send_fault(code: i32, string: &str, header: Vec<cwmp::protocol::HeaderElement>) {
     let message_body = cwmp::generate(&cwmp::protocol::Envelope {
         cwmp_version: Some(CwmpVersion::new(1, 0)),
-        header: vec![],
+        header,
         body: vec![BodyElement::Fault(Fault::new(
             &code.to_string(),
             string,
@@ -222,10 +231,18 @@ fn parse_parameter_values(xml: &str) -> Vec<ParameterValue> {
     parameters
 }
 
-fn generate_fault(code: i32, string: &str) -> String {
+fn extract_id_header(xml: &str) -> Vec<cwmp::protocol::HeaderElement> {
+    if let Ok(envelope) = cwmp::parse_bytes(xml.as_bytes()) {
+        envelope.header.into_iter().filter(|h| matches!(h, cwmp::protocol::HeaderElement::ID(_))).collect()
+    } else {
+        vec![]
+    }
+}
+
+fn generate_fault(code: i32, string: &str, header: Vec<cwmp::protocol::HeaderElement>) -> String {
     cwmp::generate(&cwmp::protocol::Envelope {
         cwmp_version: Some(CwmpVersion::new(1, 0)),
-        header: vec![],
+        header,
         body: vec![BodyElement::Fault(Fault::new(
             &code.to_string(),
             string,
@@ -236,13 +253,32 @@ fn generate_fault(code: i32, string: &str) -> String {
     .unwrap()
 }
 
-fn generate_envelope(body_element: BodyElement) -> String {
+fn generate_envelope(header: Vec<cwmp::protocol::HeaderElement>, body_element: BodyElement) -> String {
     cwmp::generate(&cwmp::protocol::Envelope {
         cwmp_version: Some(CwmpVersion::new(1, 0)),
-        header: vec![],
+        header,
         body: vec![body_element],
     })
     .unwrap()
+}
+
+async fn send_get_parameter_names_response(
+    get_parameter_names_xml: &str,
+    command_tx: Sender<String>,
+) {
+    // Just mock a few parameters at the root level for testing
+    let parameter_list = vec![
+        cwmp::protocol::ParameterInfoStruct::new("Device.", 1),
+        cwmp::protocol::ParameterInfoStruct::new("Device.DeviceInfo.", 1),
+        cwmp::protocol::ParameterInfoStruct::new("Device.DeviceInfo.Manufacturer", 1),
+        cwmp::protocol::ParameterInfoStruct::new("Device.DeviceInfo.HardwareVersion", 1),
+        cwmp::protocol::ParameterInfoStruct::new("Device.DeviceInfo.SoftwareVersion", 1),
+    ];
+    let header = extract_id_header(get_parameter_names_xml);
+    let xml = generate_envelope(header, BodyElement::GetParameterNamesResponse(
+        cwmp::protocol::GetParameterNamesResponse::new(parameter_list),
+    ));
+    send_message(&xml, Some(command_tx)).await;
 }
 
 async fn send_get_parameter_values_response(
@@ -265,9 +301,9 @@ async fn send_get_parameter_values_response(
             })
             .collect();
         if parameter_values.is_empty() {
-            generate_fault(9005, "Parameter not found")
+            generate_fault(9005, "Parameter not found", extract_id_header(get_parameter_values_xml))
         } else {
-            generate_envelope(BodyElement::GetParameterValuesResponse(
+            generate_envelope(extract_id_header(get_parameter_values_xml), BodyElement::GetParameterValuesResponse(
                 cwmp::protocol::GetParameterValuesResponse::new(parameter_values),
             ))
         }
@@ -306,11 +342,11 @@ async fn send_set_parameter_values_response(
         }
 
         if found_something {
-            generate_envelope(BodyElement::SetParameterValuesResponse(
+            generate_envelope(extract_id_header(set_parameter_values_xml), BodyElement::SetParameterValuesResponse(
                 cwmp::protocol::SetParameterValuesResponse::new(status),
             ))
         } else {
-            generate_fault(9005, "Parameter not found")
+            generate_fault(9005, "Parameter not found", extract_id_header(set_parameter_values_xml))
         }
     };
 
@@ -391,22 +427,21 @@ async fn process_command_task(
 
                 if command.contains("GetParameterValues") {
                     debug!("Processing command: GetParameterValues");
-
-                    // Here we should process the GetParameterValues command and generate a new request
-                    // for the server with the result.
-                    // For now, we just print the command.
                     send_get_parameter_values_response(&command, commands_tx.clone()).await;
                     debug!("GetParameterValues command processed: {}", command);
                 } else if command.contains("SetParameterValues") {
                     debug!("Processing command: SetParameterValues");
-
-                    // Here we should process the SetParameterValues command and generate a new request
-                    // for the server with the result.
-                    // For now, we just print the command.
                     send_set_parameter_values_response(&command, commands_tx.clone()).await;
                     debug!("SetParameterValues command processed: {}", command);
+                } else if command.contains("GetParameterNames") {
+                    debug!("Processing command: GetParameterNames");
+                    send_get_parameter_names_response(&command, commands_tx.clone()).await;
+                    debug!("GetParameterNames command processed: {}", command);
+                } else if command == "EMPTY_POST" {
+                    debug!("Sending Empty POST...");
+                    send_message("", Some(commands_tx.clone())).await;
                 } else {
-                    send_fault(9000, "Method not supported").await;
+                    send_fault(9000, "Method not supported", extract_id_header(&command)).await;
                     debug!("Unknown command: {}", command);
                 }
                 // Here we should process the command and generate a new request for the server

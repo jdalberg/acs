@@ -126,23 +126,44 @@ pub async fn upsert_device_protocol(
     protocol: &str,
     connection_request_url: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        r#"
-        INSERT INTO device_protocols (
-            device_id,
-            protocol,
-            connection_request_url
-        )
-        VALUES ($1, $2, $3)
-        ON CONFLICT (device_id, protocol) DO UPDATE SET
-            connection_request_url = EXCLUDED.connection_request_url
-        "#,
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM device_protocols WHERE device_id = $1 AND protocol = $2"
     )
     .bind(device_id)
     .bind(protocol)
-    .bind(connection_request_url)
-    .execute(pool)
+    .fetch_one(pool)
     .await?;
+
+    if count > 0 {
+        sqlx::query(
+            r#"
+            UPDATE device_protocols
+            SET connection_request_url = $3
+            WHERE device_id = $1 AND protocol = $2
+            "#,
+        )
+        .bind(device_id)
+        .bind(protocol)
+        .bind(connection_request_url)
+        .execute(pool)
+        .await?;
+    } else {
+        sqlx::query(
+            r#"
+            INSERT INTO device_protocols (
+                device_id,
+                protocol,
+                connection_request_url
+            )
+            VALUES ($1, $2, $3)
+            "#,
+        )
+        .bind(device_id)
+        .bind(protocol)
+        .bind(connection_request_url)
+        .execute(pool)
+        .await?;
+    }
 
     Ok(())
 }

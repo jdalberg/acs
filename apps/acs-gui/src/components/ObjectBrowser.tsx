@@ -34,11 +34,9 @@ export default function ObjectBrowser({ uid }: ObjectBrowserProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          Action: {
-            GetParameterNames: {
-              path_prefix: pathPrefix,
-              next_level: true
-            }
+          GetParameterNames: {
+            path_prefix: pathPrefix,
+            next_level: true
           }
         })
       });
@@ -113,10 +111,8 @@ export default function ObjectBrowser({ uid }: ObjectBrowserProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          Action: {
-            GetParameterValues: {
-              paths: [node.fullPath]
-            }
+          GetParameterValues: {
+            paths: [node.fullPath]
           }
         })
       });
@@ -141,10 +137,8 @@ export default function ObjectBrowser({ uid }: ObjectBrowserProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          Action: {
-            SetParameterValues: {
-              parameters: { [node.fullPath]: newValue }
-            }
+          SetParameterValues: {
+            parameters: { [node.fullPath]: newValue }
           }
         })
       });

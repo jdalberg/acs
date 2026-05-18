@@ -382,7 +382,15 @@ pub(crate) async fn handle_cwmp_request(
 ) -> Result<Box<dyn warp::Reply>, warp::Rejection> {
     info!("Received CWMP request. Cookie: {:?}", cookie);
 
-    if let Some(session_cookie) = cookie {
+    // Extract just the session ID from the cookie string (e.g. "session=1234; HttpOnly" -> "1234")
+    let clean_session_id = cookie.and_then(|c| {
+        c.split(';')
+            .map(|s| s.trim())
+            .find(|s| s.starts_with("session="))
+            .map(|s| s.trim_start_matches("session=").to_string())
+    });
+
+    if let Some(session_cookie) = clean_session_id {
         info!("Session Cookie: {:?}", session_cookie);
 
         if body.is_empty() {

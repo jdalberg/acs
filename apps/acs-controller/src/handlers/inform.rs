@@ -47,10 +47,22 @@ pub async fn handle_inform(
     // Extract connection request URL
     let cr_url = payload.parameter_list.get("InternetGatewayDevice.ManagementServer.ConnectionRequestURL")
         .or_else(|| payload.parameter_list.get("Device.ManagementServer.ConnectionRequestURL"));
+    
+    info!(
+        device_id = %payload.device_id,
+        cr_url = ?cr_url,
+        param_list_keys = ?payload.parameter_list.keys().collect::<Vec<_>>(),
+        "Checking connection request URL"
+    );
+
     if let Some(url) = cr_url {
+        info!("Upserting device protocol for URL: {}", url);
         db::upsert_device_protocol(pool, device_uuid, payload.effective_protocol(), url)
             .await
             .context("Failed to upsert device protocol")?;
+        info!("Successfully upserted device protocol");
+    } else {
+        tracing::warn!("No ConnectionRequestURL found in parameter_list!");
     }
 
     debug!(
