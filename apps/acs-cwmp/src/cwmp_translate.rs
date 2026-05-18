@@ -161,10 +161,19 @@ pub fn body_element_to_response(
         }
 
         // ── GetParameterNames response ────────────────────────────────────────
-        // TODO: cwmp 0.2.4 exposes parameter_list as private in the compiled
-        // artifact. Upgrade the crate or add a getter to surface the list.
-        // For now we signal Done so the controller knows the call completed.
-        BodyElement::GetParameterNamesResponse(_) => ActionResult::Done,
+        BodyElement::GetParameterNamesResponse(r) => {
+            let map: HashMap<String, String> = r
+                .parameter_list
+                .iter()
+                .map(|p| {
+                    let name = p.name.0.clone();
+                    // writable is a u8, usually 0 (false) or 1 (true)
+                    let writable = if p.writable == 1 { "true" } else { "false" }.to_string();
+                    (name, writable)
+                })
+                .collect();
+            ActionResult::Success(map)
+        }
 
         // ── AddObject response — report the allocated instance number ─────────
         BodyElement::AddObjectResponse(r) => {

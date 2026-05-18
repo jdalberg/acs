@@ -22,7 +22,7 @@ rand = "^0.8"
 url = "^2.2"
 serde-xml-rs = "^0.6"
 reqwest = { "version" = "0.12", default_features=false, features = ["rustls-tls"]}
-cwmp = { git = "ssh://git@github.com/jdalberg/cwmp.git", tag = "0.2.4"}
+cwmp = { git = "ssh://git@github.com/jdalberg/cwmp.git", tag = "0.2.10"}
 redis = { version = "0.24", features = ["tokio-comp", "json"] }
 bytes = "1"
 dashmap = "^6"
