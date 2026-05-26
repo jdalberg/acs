@@ -8,70 +8,82 @@ use tracing::{debug, error, info};
 
 /// Scans the provisioning directory hierarchy for matching python scripts and executes them.
 ///
-/// Hierarchy levels (from least to most specific):
-/// 1. `{root}/{domain_slug}/`
-/// 2. `{root}/{domain_slug}/{hw_version}/`
-/// 3. `{root}/{domain_slug}/{hw_version}/{sw_version}/`
-/// 4. `{root}/{domain_slug}/{hw_version}/{sw_version}/{serial_number}/`
+/// Directory layout (event-type first, general → specific):
 ///
-/// In each directory, it looks for scripts named:
-/// - `{event_type}_add.py`
-/// - `{event_type}_update.py`
-/// - `{event_type}_delete.py`
+/// ```text
+/// {root}/
+/// └── {event_type}/               ← e.g. "inform", "session_ended"
+///     └── {domain_slug}/          ← e.g. "default", "acme"
+///         ├── add.py              ← new device
+///         ├── update.py           ← known device
+///         ├── delete.py           ← decommission (future internal event)
+///         └── {hw_version}/
+///             ├── add.py
+///             └── {sw_version}/
+///                 ├── add.py
+///                 └── {device_id}/    ← "{oui}-{serial}", e.g. "AABB00-1234567"
+///                     └── add.py
+/// ```
+///
+/// All scripts that exist at each level are executed in order (general → specific).
+/// Their returned actions are merged into a single list.
 pub async fn run_scripts(
     root_dir: &Path,
+    event_type: &str,
     domain_slug: &str,
     hw_version: Option<&str>,
     sw_version: Option<&str>,
-    serial_number: &str,
-    event_type: &str,
+    device_id: &str,
     payload_bytes: &[u8],
 ) -> Result<Vec<Action>> {
     let mut collected_actions = Vec::new();
-    
-    // Build the directories to scan, from general to specific
-    let mut dirs_to_scan = Vec::new();
-    
-    let mut current_dir = root_dir.join(domain_slug);
-    dirs_to_scan.push(current_dir.clone());
-    
+
+    // Base: root / event_type / domain_slug
+    let base = root_dir.join(event_type).join(domain_slug);
+
+    // Build candidate directories from general to specific
+    let mut dirs_to_scan: Vec<PathBuf> = vec![base.clone()];
+
     if let Some(hw) = hw_version {
-        current_dir = current_dir.join(hw);
-        dirs_to_scan.push(current_dir.clone());
-        
+        let hw_dir = base.join(hw);
+        dirs_to_scan.push(hw_dir.clone());
+
         if let Some(sw) = sw_version {
-            current_dir = current_dir.join(sw);
-            dirs_to_scan.push(current_dir.clone());
-            
-            current_dir = current_dir.join(serial_number);
-            dirs_to_scan.push(current_dir);
+            let sw_dir = hw_dir.join(sw);
+            dirs_to_scan.push(sw_dir.clone());
+
+            dirs_to_scan.push(sw_dir.join(device_id));
         }
     }
 
-    for dir in dirs_to_scan {
-        if !dir.exists() || !dir.is_dir() {
+    // Script names are fixed regardless of event type
+    const SCRIPT_NAMES: [&str; 3] = ["add.py", "update.py", "delete.py"];
+
+    for dir in &dirs_to_scan {
+        if !dir.is_dir() {
             continue;
         }
 
-        let script_names = [
-            format!("{}_add.py", event_type),
-            format!("{}_update.py", event_type),
-            format!("{}_delete.py", event_type),
-        ];
+        for &script_name in &SCRIPT_NAMES {
+            let script_path = dir.join(script_name);
+            if !script_path.is_file() {
+                continue;
+            }
 
-        for script_name in script_names {
-            let script_path = dir.join(&script_name);
-            if script_path.exists() && script_path.is_file() {
-                debug!("Executing provisioning script: {:?}", script_path);
-                match execute_python_script(&script_path, &payload_bytes).await {
-                    Ok(mut actions) => {
-                        info!("Script {:?} returned {} actions", script_path, actions.len());
-                        collected_actions.append(&mut actions);
-                    }
-                    Err(e) => {
-                        error!("Failed to execute script {:?}: {:#}", script_path, e);
-                        // We continue executing other scripts even if one fails
-                    }
+            debug!(script = ?script_path, "Executing provisioning script");
+
+            match execute_python_script(&script_path, payload_bytes).await {
+                Ok(mut actions) => {
+                    info!(
+                        script = ?script_path,
+                        count  = actions.len(),
+                        "Script returned actions",
+                    );
+                    collected_actions.append(&mut actions);
+                }
+                Err(e) => {
+                    // Log and continue — a failing script must not abort the others.
+                    error!(script = ?script_path, error = ?e, "Provisioning script failed");
                 }
             }
         }

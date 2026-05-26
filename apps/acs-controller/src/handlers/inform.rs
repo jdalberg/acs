@@ -82,11 +82,11 @@ pub async fn handle_inform(
     // Execute provisioning scripts
     let actions = provisioning::run_scripts(
         &config.provisioning_root,
+        "inform",
         &domain_slug,
         payload.hardware_version(),
         payload.software_version(),
-        &payload.serial_number,
-        "inform",
+        &payload.device_id,
         raw,
     )
     .await
