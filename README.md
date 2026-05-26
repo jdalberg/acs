@@ -4,27 +4,72 @@ The project is built around the idea of an ACS server, which is used to manage d
 ## Diagrams
 
 ```mermaid
-flowchart TD;
-    subgraph Protocol Gateways
-        cwmp((CWMP))
-        usp((USP))
+flowchart TD
+    subgraph Devices["CPE Devices"]
+        dev1(["CPE (CWMP)"])
+        dev2(["CPE (USP)"])
+        mock(["mock-client\n(CPE simulator)"])
     end
-    
-    dev1((Device)) -- CWMP --> cwmp
-    dev2((Device)) -- USP --> usp
-    
-    nats{{NATS Server}}
-    
-    cwmp -- Abstract Device Event --> nats
-    usp -- Abstract Device Event --> nats
-    
-    core((Core Component))
-    
-    nats -- Event Queue --> core
-    core -- Device Operations / End --> nats
-    
-    nats -- Operation Queue --> cwmp
-    nats -- Operation Queue --> usp
+
+    subgraph Gateways["Protocol Gateways"]
+        cwmp["acs-cwmp\nHTTP · TR-069"]
+        usp["acs-usp\n(in progress)"]
+    end
+
+    subgraph Infra["Infrastructure"]
+        nats{{NATS}}
+        pg[(PostgreSQL)]
+        redis[(Redis)]
+    end
+
+    subgraph Core["acs-controller"]
+        ctrl["Event handler\n+ Provisioning engine\n+ HTTP API"]
+        scripts["Provisioning scripts\n(Python)"]
+        ctrl <-->|"discovers & runs"| scripts
+    end
+
+    subgraph Connreq["acs-connection-requester"]
+        cr["Connection\nRequester"]
+    end
+
+    subgraph Frontend["acs-gui"]
+        gui["React / Vite\nManagement UI"]
+    end
+
+    %% Device → Gateway
+    dev1  -- "HTTP Inform" --> cwmp
+    dev2  -- "USP Notify"  --> usp
+    mock  -- "HTTP Inform" --> cwmp
+
+    %% Gateway session store
+    cwmp <--> |"session state"| redis
+
+    %% Gateway → NATS (events)
+    cwmp -- "acs.events.{oui}.{serial}.inform\nacs.events.{oui}.{serial}.command_response\nacs.events.{oui}.{serial}.session_ended" --> nats
+    usp  -- "acs.events.…"  --> nats
+
+    %% NATS → Controller
+    nats -- "acs.events.>" --> ctrl
+
+    %% Controller → DB
+    ctrl <-->|"device state\nupsert / query"| pg
+
+    %% Controller → NATS (commands)
+    ctrl -- "acs.sessions.{session_id}.command" --> nats
+
+    %% Controller → connection requester (via NATS)
+    ctrl -- "acs.connection.request" --> nats
+    nats -- "acs.connection.request" --> cr
+
+    %% Connection requester → device
+    cr -- "HTTP GET\n(wake-up)" --> dev1
+
+    %% NATS → Gateway (commands)
+    nats -- "acs.sessions.{session_id}.command" --> cwmp
+    nats -- "acs.sessions.{session_id}.command" --> usp
+
+    %% GUI → Controller API
+    gui -- "REST /api/v1/…" --> ctrl
 ```
 
 ## Components
