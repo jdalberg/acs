@@ -69,6 +69,7 @@ Every script should import `acs_sdk` from the provisioning root:
 
 ```python
 import sys, os
+# Scripts live at {event_type}/{domain_slug}/add.py — 3 dirname() calls to reach the provisioning root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from acs_sdk import load_payload, set_parameter_values, emit_actions, emit_no_actions
@@ -76,8 +77,9 @@ from acs_sdk import load_payload, set_parameter_values, emit_actions, emit_no_ac
 payload = load_payload()
 
 if not payload.has_event("0 BOOTSTRAP"):
-    emit_no_actions()
+    emit_no_actions()          # exits 0 immediately
 
+# Only reached on BOOTSTRAP
 emit_actions([
     set_parameter_values({
         "Device.ManagementServer.PeriodicInformEnable":   "true",
